@@ -1,4 +1,6 @@
 #define USE_THE_REPOSITORY_VARIABLE
+#define DISABLE_SIGN_COMPARE_WARNINGS
+
 #include "builtin.h"
 #include "commit.h"
 #include "diff.h"
@@ -15,7 +17,7 @@
 #include "replace-object.h"
 #include "object-file.h"
 #include "object-name.h"
-#include "object-store-ll.h"
+#include "object-store.h"
 #include "shallow.h"
 
 static const char * const prune_usage[] = {
@@ -62,7 +64,8 @@ static void perform_reachability_traversal(struct rev_info *revs)
 		return;
 
 	if (show_progress)
-		progress = start_delayed_progress(_("Checking connectivity"), 0);
+		progress = start_delayed_progress(the_repository,
+						  _("Checking connectivity"), 0);
 	mark_reachable_objects(revs, 1, expire, progress);
 	stop_progress(&progress);
 	initialized = 1;
@@ -182,7 +185,7 @@ int cmd_prune(int argc,
 		const char *name = *argv++;
 
 		if (!repo_get_oid(the_repository, name, &oid)) {
-			struct object *object = parse_object_or_die(&oid,
+			struct object *object = parse_object_or_die(the_repository, &oid,
 								    name);
 			add_pending_object(&revs, object, "");
 		}

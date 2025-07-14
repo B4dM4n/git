@@ -1,11 +1,12 @@
 #define USE_THE_REPOSITORY_VARIABLE
+#define DISABLE_SIGN_COMPARE_WARNINGS
 
 #include "git-compat-util.h"
 #include "environment.h"
 #include "string-list.h"
 #include "mailmap.h"
 #include "object-name.h"
-#include "object-store-ll.h"
+#include "object-store.h"
 #include "setup.h"
 
 char *git_mailmap_file;

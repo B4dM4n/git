@@ -1,4 +1,5 @@
 #define USE_THE_REPOSITORY_VARIABLE
+
 #include "builtin.h"
 #include "abspath.h"
 #include "environment.h"
@@ -27,7 +28,7 @@
 #include "diff.h"
 #include "object-file.h"
 #include "object-name.h"
-#include "object-store-ll.h"
+#include "object-store.h"
 #include "advice.h"
 #include "branch.h"
 #include "list-objects-filter-options.h"
@@ -77,7 +78,7 @@ static int get_default_remote_submodule(const char *module_path, char **default_
 	int ret;
 
 	if (repo_submodule_init(&subrepo, the_repository, module_path,
-				null_oid()) < 0)
+				null_oid(the_hash_algo)) < 0)
 		return die_message(_("could not get a repository handle for submodule '%s'"),
 				   module_path);
 	ret = repo_get_default_remote(&subrepo, default_remote);
@@ -194,7 +195,7 @@ static int module_list_compute(const char **argv,
 			       struct pathspec *pathspec,
 			       struct module_list *list)
 {
-	int i, result = 0;
+	int result = 0;
 	char *ps_matched = NULL;
 
 	parse_pathspec(pathspec, 0,
@@ -207,7 +208,7 @@ static int module_list_compute(const char **argv,
 	if (repo_read_index(the_repository) < 0)
 		die(_("index file corrupt"));
 
-	for (i = 0; i < the_repository->index->cache_nr; i++) {
+	for (size_t i = 0; i < the_repository->index->cache_nr; i++) {
 		const struct cache_entry *ce = the_repository->index->cache[i];
 
 		if (!match_pathspec(the_repository->index, pathspec, ce->name, ce_namelen(ce),
@@ -307,7 +308,7 @@ static void runcommand_in_submodule_cb(const struct cache_entry *list_item,
 	displaypath = get_submodule_displaypath(path, info->prefix,
 						info->super_prefix);
 
-	sub = submodule_from_path(the_repository, null_oid(), path);
+	sub = submodule_from_path(the_repository, null_oid(the_hash_algo), path);
 
 	if (!sub)
 		die(_("No url found for submodule path '%s' in .gitmodules"),
@@ -399,7 +400,8 @@ cleanup:
 	free(displaypath);
 }
 
-static int module_foreach(int argc, const char **argv, const char *prefix)
+static int module_foreach(int argc, const char **argv, const char *prefix,
+			  struct repository *repo UNUSED)
 {
 	struct foreach_cb info = FOREACH_CB_INIT;
 	struct pathspec pathspec = { 0 };
@@ -466,7 +468,7 @@ static void init_submodule(const char *path, const char *prefix,
 
 	displaypath = get_submodule_displaypath(path, prefix, super_prefix);
 
-	sub = submodule_from_path(the_repository, null_oid(), path);
+	sub = submodule_from_path(the_repository, null_oid(the_hash_algo), path);
 
 	if (!sub)
 		die(_("No url found for submodule path '%s' in .gitmodules"),
@@ -544,7 +546,8 @@ static void init_submodule_cb(const struct cache_entry *list_item, void *cb_data
 		       info->flags);
 }
 
-static int module_init(int argc, const char **argv, const char *prefix)
+static int module_init(int argc, const char **argv, const char *prefix,
+		       struct repository *repo UNUSED)
 {
 	struct init_cb info = INIT_CB_INIT;
 	struct pathspec pathspec = { 0 };
@@ -642,14 +645,14 @@ static void status_submodule(const char *path, const struct object_id *ce_oid,
 	if (validate_submodule_path(path) < 0)
 		exit(128);
 
-	if (!submodule_from_path(the_repository, null_oid(), path))
+	if (!submodule_from_path(the_repository, null_oid(the_hash_algo), path))
 		die(_("no submodule mapping found in .gitmodules for path '%s'"),
 		      path);
 
 	displaypath = get_submodule_displaypath(path, prefix, super_prefix);
 
 	if ((CE_STAGEMASK & ce_flags) >> CE_STAGESHIFT) {
-		print_status(flags, 'U', path, null_oid(), displaypath);
+		print_status(flags, 'U', path, null_oid(the_hash_algo), displaypath);
 		goto cleanup;
 	}
 
@@ -738,7 +741,8 @@ static void status_submodule_cb(const struct cache_entry *list_item,
 			 info->prefix, info->super_prefix, info->flags);
 }
 
-static int module_status(int argc, const char **argv, const char *prefix)
+static int module_status(int argc, const char **argv, const char *prefix,
+			 struct repository *repo UNUSED)
 {
 	struct status_cb info = STATUS_CB_INIT;
 	struct pathspec pathspec = { 0 };
@@ -908,7 +912,7 @@ static void generate_submodule_summary(struct summary_cb *info,
 	struct strbuf errmsg = STRBUF_INIT;
 	int total_commits = -1;
 
-	if (!info->cached && oideq(&p->oid_dst, null_oid())) {
+	if (!info->cached && oideq(&p->oid_dst, null_oid(the_hash_algo))) {
 		if (S_ISGITLINK(p->mod_dst)) {
 			struct ref_store *refs = repo_get_submodule_ref_store(the_repository,
 									      p->sm_path);
@@ -1047,7 +1051,7 @@ static void prepare_submodule_summary(struct summary_cb *info,
 
 		if (info->for_status && p->status != 'A' &&
 		    (sub = submodule_from_path(the_repository,
-					       null_oid(), p->sm_path))) {
+					       null_oid(the_hash_algo), p->sm_path))) {
 			char *config_key = NULL;
 			const char *value;
 			int ignore_all = 0;
@@ -1163,7 +1167,8 @@ cleanup:
 	return ret;
 }
 
-static int module_summary(int argc, const char **argv, const char *prefix)
+static int module_summary(int argc, const char **argv, const char *prefix,
+			  struct repository *repo UNUSED)
 {
 	struct summary_cb info = SUMMARY_CB_INIT;
 	int cached = 0;
@@ -1254,7 +1259,7 @@ static void sync_submodule(const char *path, const char *prefix,
 	if (validate_submodule_path(path) < 0)
 		exit(128);
 
-	sub = submodule_from_path(the_repository, null_oid(), path);
+	sub = submodule_from_path(the_repository, null_oid(the_hash_algo), path);
 
 	if (sub && sub->url) {
 		if (starts_with_dot_dot_slash(sub->url) ||
@@ -1296,7 +1301,7 @@ static void sync_submodule(const char *path, const char *prefix,
 	remote_key = xstrfmt("remote.%s.url", default_remote);
 	free(default_remote);
 
-	submodule_to_gitdir(&sb, path);
+	submodule_to_gitdir(the_repository, &sb, path);
 	strbuf_addstr(&sb, "/config");
 
 	if (git_config_set_in_file_gently(sb.buf, remote_key, NULL, sub_origin_url))
@@ -1339,7 +1344,8 @@ static void sync_submodule_cb(const struct cache_entry *list_item, void *cb_data
 		       info->flags);
 }
 
-static int module_sync(int argc, const char **argv, const char *prefix)
+static int module_sync(int argc, const char **argv, const char *prefix,
+		       struct repository *repo UNUSED)
 {
 	struct sync_cb info = SYNC_CB_INIT;
 	struct pathspec pathspec = { 0 };
@@ -1398,7 +1404,7 @@ static void deinit_submodule(const char *path, const char *prefix,
 	if (validate_submodule_path(path) < 0)
 		exit(128);
 
-	sub = submodule_from_path(the_repository, null_oid(), path);
+	sub = submodule_from_path(the_repository, null_oid(the_hash_algo), path);
 
 	if (!sub || !sub->name)
 		goto cleanup;
@@ -1485,7 +1491,8 @@ static void deinit_submodule_cb(const struct cache_entry *list_item,
 	deinit_submodule(list_item->name, info->prefix, info->flags);
 }
 
-static int module_deinit(int argc, const char **argv, const char *prefix)
+static int module_deinit(int argc, const char **argv, const char *prefix,
+			 struct repository *repo UNUSED)
 {
 	struct deinit_cb info = DEINIT_CB_INIT;
 	struct pathspec pathspec = { 0 };
@@ -1732,7 +1739,7 @@ static int clone_submodule(const struct module_clone_data *clone_data,
 		    !is_empty_dir(clone_data_path))
 			die(_("directory not empty: '%s'"), clone_data_path);
 
-		if (safe_create_leading_directories_const(sm_gitdir) < 0)
+		if (safe_create_leading_directories_const(the_repository, sm_gitdir) < 0)
 			die(_("could not create directory '%s'"), sm_gitdir);
 
 		prepare_possible_alternates(clone_data->name, reference);
@@ -1793,7 +1800,7 @@ static int clone_submodule(const struct module_clone_data *clone_data,
 		if (clone_data->require_init && !stat(clone_data_path, &st) &&
 		    !is_empty_dir(clone_data_path))
 			die(_("directory not empty: '%s'"), clone_data_path);
-		if (safe_create_leading_directories_const(clone_data_path) < 0)
+		if (safe_create_leading_directories_const(the_repository, clone_data_path) < 0)
 			die(_("could not create directory '%s'"), clone_data_path);
 		path = xstrfmt("%s/index", sm_gitdir);
 		unlink_or_warn(path);
@@ -1819,7 +1826,7 @@ static int clone_submodule(const struct module_clone_data *clone_data,
 
 	connect_work_tree_and_git_dir(clone_data_path, sm_gitdir, 0);
 
-	p = git_pathdup_submodule(clone_data_path, "config");
+	p = repo_submodule_path(the_repository, clone_data_path, "config");
 	if (!p)
 		die(_("could not get submodule directory for '%s'"), clone_data_path);
 
@@ -1842,7 +1849,8 @@ static int clone_submodule(const struct module_clone_data *clone_data,
 	return 0;
 }
 
-static int module_clone(int argc, const char **argv, const char *prefix)
+static int module_clone(int argc, const char **argv, const char *prefix,
+			struct repository *repo UNUSED)
 {
 	int dissociate = 0, quiet = 0, progress = 0, require_init = 0;
 	struct module_clone_data clone_data = MODULE_CLONE_DATA_INIT;
@@ -1921,7 +1929,7 @@ static int determine_submodule_update_strategy(struct repository *r,
 					       enum submodule_update_type update,
 					       struct submodule_update_strategy *out)
 {
-	const struct submodule *sub = submodule_from_path(r, null_oid(), path);
+	const struct submodule *sub = submodule_from_path(r, null_oid(the_hash_algo), path);
 	char *key;
 	const char *val;
 	int ret;
@@ -2081,7 +2089,7 @@ static int prepare_to_clone_next_submodule(const struct cache_entry *ce,
 		goto cleanup;
 	}
 
-	sub = submodule_from_path(the_repository, null_oid(), ce->name);
+	sub = submodule_from_path(the_repository, null_oid(the_hash_algo), ce->name);
 
 	if (!sub) {
 		next_submodule_warn_missing(suc, out, displaypath);
@@ -2333,7 +2341,14 @@ static int fetch_in_submodule(const char *module_path, int depth, int quiet,
 		strvec_pushf(&cp.args, "--depth=%d", depth);
 	if (oid) {
 		char *hex = oid_to_hex(oid);
-		char *remote = get_default_remote();
+		char *remote;
+		int code;
+
+		code = get_default_remote_submodule(module_path, &remote);
+		if (code) {
+			child_process_clear(&cp);
+			return code;
+		}
 
 		strvec_pushl(&cp.args, remote, hex, NULL);
 		free(remote);
@@ -2470,7 +2485,7 @@ static int remote_submodule_branch(const char *path, const char **branch)
 	char *key;
 	*branch = NULL;
 
-	sub = submodule_from_path(the_repository, null_oid(), path);
+	sub = submodule_from_path(the_repository, null_oid(the_hash_algo), path);
 	if (!sub)
 		return die_message(_("could not initialize submodule at path '%s'"),
 				   path);
@@ -2516,7 +2531,7 @@ static int ensure_core_worktree(const char *path)
 	const char *cw;
 	struct repository subrepo;
 
-	if (repo_submodule_init(&subrepo, the_repository, path, null_oid()))
+	if (repo_submodule_init(&subrepo, the_repository, path, null_oid(the_hash_algo)))
 		return die_message(_("could not get a repository handle for submodule '%s'"),
 				   path);
 
@@ -2629,7 +2644,7 @@ static int update_submodule(struct update_data *update_data)
 		return ret;
 
 	if (update_data->just_cloned)
-		oidcpy(&update_data->suboid, null_oid());
+		oidcpy(&update_data->suboid, null_oid(the_hash_algo));
 	else if (repo_resolve_gitlink_ref(the_repository, update_data->sm_path,
 					  "HEAD", &update_data->suboid))
 		return die_message(_("Unable to find current revision in submodule path '%s'"),
@@ -2682,8 +2697,8 @@ static int update_submodule(struct update_data *update_data)
 		struct update_data next = *update_data;
 
 		next.prefix = NULL;
-		oidcpy(&next.oid, null_oid());
-		oidcpy(&next.suboid, null_oid());
+		oidcpy(&next.oid, null_oid(the_hash_algo));
+		oidcpy(&next.suboid, null_oid(the_hash_algo));
 
 		cp.dir = update_data->sm_path;
 		cp.git_cmd = 1;
@@ -2772,7 +2787,8 @@ cleanup:
 	return ret;
 }
 
-static int module_update(int argc, const char **argv, const char *prefix)
+static int module_update(int argc, const char **argv, const char *prefix,
+			 struct repository *repo UNUSED)
 {
 	struct pathspec pathspec = { 0 };
 	struct pathspec pathspec2 = { 0 };
@@ -2904,7 +2920,8 @@ cleanup:
 	return ret;
 }
 
-static int push_check(int argc, const char **argv, const char *prefix UNUSED)
+static int push_check(int argc, const char **argv, const char *prefix UNUSED,
+		      struct repository *repo UNUSED)
 {
 	struct remote *remote;
 	const char *superproject_head;
@@ -2984,7 +3001,8 @@ static int push_check(int argc, const char **argv, const char *prefix UNUSED)
 	return 0;
 }
 
-static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
+static int absorb_git_dirs(int argc, const char **argv, const char *prefix,
+			   struct repository *repo UNUSED)
 {
 	int i;
 	struct pathspec pathspec = { 0 };
@@ -3017,7 +3035,8 @@ cleanup:
 	return ret;
 }
 
-static int module_set_url(int argc, const char **argv, const char *prefix)
+static int module_set_url(int argc, const char **argv, const char *prefix,
+			  struct repository *repo UNUSED)
 {
 	int quiet = 0, ret;
 	const char *newurl;
@@ -3038,7 +3057,7 @@ static int module_set_url(int argc, const char **argv, const char *prefix)
 	if (argc != 2 || !(path = argv[0]) || !(newurl = argv[1]))
 		usage_with_options(usage, options);
 
-	sub = submodule_from_path(the_repository, null_oid(), path);
+	sub = submodule_from_path(the_repository, null_oid(the_hash_algo), path);
 
 	if (!sub)
 		die(_("no submodule mapping found in .gitmodules for path '%s'"),
@@ -3056,7 +3075,8 @@ static int module_set_url(int argc, const char **argv, const char *prefix)
 	return !!ret;
 }
 
-static int module_set_branch(int argc, const char **argv, const char *prefix)
+static int module_set_branch(int argc, const char **argv, const char *prefix,
+			     struct repository *repo UNUSED)
 {
 	int opt_default = 0, ret;
 	const char *opt_branch = NULL;
@@ -3093,7 +3113,7 @@ static int module_set_branch(int argc, const char **argv, const char *prefix)
 	if (argc != 1 || !(path = argv[0]))
 		usage_with_options(usage, options);
 
-	sub = submodule_from_path(the_repository, null_oid(), path);
+	sub = submodule_from_path(the_repository, null_oid(the_hash_algo), path);
 
 	if (!sub)
 		die(_("no submodule mapping found in .gitmodules for path '%s'"),
@@ -3106,7 +3126,8 @@ static int module_set_branch(int argc, const char **argv, const char *prefix)
 	return !!ret;
 }
 
-static int module_create_branch(int argc, const char **argv, const char *prefix)
+static int module_create_branch(int argc, const char **argv, const char *prefix,
+				struct repository *repo UNUSED)
 {
 	enum branch_track track;
 	int quiet = 0, force = 0, reflog = 0, dry_run = 0;
@@ -3376,7 +3397,6 @@ static void die_on_index_match(const char *path, int force)
 		die(_("index file corrupt"));
 
 	if (ps.nr) {
-		int i;
 		char *ps_matched = xcalloc(ps.nr, 1);
 
 		/* TODO: audit for interaction with sparse-index. */
@@ -3386,7 +3406,7 @@ static void die_on_index_match(const char *path, int force)
 		 * Since there is only one pathspec, we just need to
 		 * check ps_matched[0] to know if a cache entry matched.
 		 */
-		for (i = 0; i < the_repository->index->cache_nr; i++) {
+		for (size_t i = 0; i < the_repository->index->cache_nr; i++) {
 			ce_path_match(the_repository->index, the_repository->index->cache[i], &ps,
 				      ps_matched);
 
@@ -3417,7 +3437,8 @@ static void die_on_repo_without_commits(const char *path)
 	strbuf_release(&sb);
 }
 
-static int module_add(int argc, const char **argv, const char *prefix)
+static int module_add(int argc, const char **argv, const char *prefix,
+		      struct repository *repo UNUSED)
 {
 	int force = 0, quiet = 0, progress = 0, dissociate = 0;
 	struct add_data add_data = ADD_DATA_INIT;
@@ -3550,7 +3571,7 @@ cleanup:
 int cmd_submodule__helper(int argc,
 			  const char **argv,
 			  const char *prefix,
-			  struct repository *repo UNUSED)
+			  struct repository *repo)
 {
 	parse_opt_subcommand_fn *fn = NULL;
 	const char *const usage[] = {
@@ -3576,5 +3597,5 @@ int cmd_submodule__helper(int argc,
 	};
 	argc = parse_options(argc, argv, prefix, options, usage, 0);
 
-	return fn(argc, argv, prefix);
+	return fn(argc, argv, prefix, repo);
 }

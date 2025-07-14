@@ -1,4 +1,6 @@
 #define USE_THE_REPOSITORY_VARIABLE
+#define DISABLE_SIGN_COMPARE_WARNINGS
+
 #include "builtin.h"
 #include "abspath.h"
 #include "config.h"
@@ -1208,9 +1210,9 @@ static int fsmonitor_run_daemon_1(struct fsmonitor_daemon_state *state)
 	 * system event listener thread so that we have the IPC handle
 	 * before we need it.
 	 */
-	if (ipc_server_run_async(&state->ipc_server_data,
-				 state->path_ipc.buf, &ipc_opts,
-				 handle_client, state))
+	if (ipc_server_init_async(&state->ipc_server_data,
+				  state->path_ipc.buf, &ipc_opts,
+				  handle_client, state))
 		return error_errno(
 			_("could not start IPC thread pool on '%s'"),
 			state->path_ipc.buf);
@@ -1596,8 +1598,8 @@ int cmd_fsmonitor__daemon(int argc, const char **argv, const char *prefix UNUSED
 		OPT_END()
 	};
 
-	if (argc == 2 && !strcmp(argv[1], "-h"))
-		usage_with_options(builtin_fsmonitor__daemon_usage, options);
+	show_usage_with_options_if_asked(argc, argv,
+					 builtin_fsmonitor__daemon_usage, options);
 
 	die(_("fsmonitor--daemon not supported on this platform"));
 }

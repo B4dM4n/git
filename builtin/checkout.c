@@ -1,4 +1,6 @@
 #define USE_THE_REPOSITORY_VARIABLE
+#define DISABLE_SIGN_COMPARE_WARNINGS
+
 #include "builtin.h"
 #include "advice.h"
 #include "branch.h"
@@ -15,9 +17,10 @@
 #include "merge-ll.h"
 #include "lockfile.h"
 #include "mem-pool.h"
-#include "merge-recursive.h"
+#include "merge-ort-wrappers.h"
+#include "object-file.h"
 #include "object-name.h"
-#include "object-store-ll.h"
+#include "object-store.h"
 #include "parse-options.h"
 #include "path.h"
 #include "preload-index.h"
@@ -128,8 +131,8 @@ static int post_checkout_hook(struct commit *old_commit, struct commit *new_comm
 			      int changed)
 {
 	return run_hooks_l(the_repository, "post-checkout",
-			   oid_to_hex(old_commit ? &old_commit->object.oid : null_oid()),
-			   oid_to_hex(new_commit ? &new_commit->object.oid : null_oid()),
+			   oid_to_hex(old_commit ? &old_commit->object.oid : null_oid(the_hash_algo)),
+			   oid_to_hex(new_commit ? &new_commit->object.oid : null_oid(the_hash_algo)),
 			   changed ? "1" : "0", NULL);
 	/* "new_commit" can be NULL when checking out from the index before
 	   a commit exists. */
@@ -708,7 +711,7 @@ static int reset_tree(struct tree *tree, const struct checkout_opts *o,
 	opts.src_index = the_repository->index;
 	opts.dst_index = the_repository->index;
 	init_checkout_metadata(&opts.meta, info->refname,
-			       info->commit ? &info->commit->object.oid : null_oid(),
+			       info->commit ? &info->commit->object.oid : null_oid(the_hash_algo),
 			       NULL);
 	if (parse_tree(tree) < 0)
 		return 128;
@@ -742,7 +745,7 @@ static void setup_branch_path(struct branch_info *branch)
 			   &branch->oid, &branch->refname, 0))
 		repo_get_oid_committish(the_repository, branch->name, &branch->oid);
 
-	strbuf_branchname(&buf, branch->name, INTERPRET_BRANCH_LOCAL);
+	copy_branchname(&buf, branch->name, INTERPRET_BRANCH_LOCAL);
 	if (strcmp(buf.buf, branch->name)) {
 		free(branch->name);
 		branch->name = xstrdup(buf.buf);
@@ -905,10 +908,10 @@ static int merge_working_tree(const struct checkout_opts *opts,
 			o.branch1 = new_branch_info->name;
 			o.branch2 = "local";
 			o.conflict_style = opts->conflict_style;
-			ret = merge_trees(&o,
-					  new_tree,
-					  work,
-					  old_tree);
+			ret = merge_ort_nonrecursive(&o,
+						     new_tree,
+						     work,
+						     old_tree);
 			if (ret < 0)
 				exit(128);
 			ret = reset_tree(new_tree,
@@ -1716,7 +1719,7 @@ static struct option *add_common_switch_branch_options(
 			   N_("update ignored files (default)"),
 			   PARSE_OPT_NOCOMPLETE),
 		OPT_BOOL(0, "ignore-other-worktrees", &opts->ignore_other_worktrees,
-			 N_("do not check if another worktree is holding the given ref")),
+			 N_("do not check if another worktree is using this branch")),
 		OPT_END()
 	};
 	struct option *newopts = parse_options_concat(prevopts, options);

@@ -5,7 +5,10 @@
  *
  * Based on git-merge.sh by Junio C Hamano.
  */
+
 #define USE_THE_REPOSITORY_VARIABLE
+#define DISABLE_SIGN_COMPARE_WARNINGS
+
 #include "builtin.h"
 
 #include "abspath.h"
@@ -36,7 +39,6 @@
 #include "rerere.h"
 #include "help.h"
 #include "merge.h"
-#include "merge-recursive.h"
 #include "merge-ort-wrappers.h"
 #include "resolve-undo.h"
 #include "remote.h"
@@ -168,7 +170,7 @@ static struct strategy *get_strategy(const char *name)
 	struct strategy *ret;
 	static struct cmdnames main_cmds = {0}, other_cmds = {0};
 	static int loaded;
-	char *default_strategy = getenv("GIT_TEST_MERGE_ALGORITHM");
+	char *default_strategy = NULL;
 
 	if (!name)
 		return NULL;
@@ -247,9 +249,16 @@ static struct option builtin_merge_options[] = {
 	OPT_BOOL(0, "stat", &show_diffstat,
 		N_("show a diffstat at the end of the merge")),
 	OPT_BOOL(0, "summary", &show_diffstat, N_("(synonym to --stat)")),
-	{ OPTION_INTEGER, 0, "log", &shortlog_len, N_("n"),
-	  N_("add (at most <n>) entries from shortlog to merge commit message"),
-	  PARSE_OPT_OPTARG, NULL, DEFAULT_MERGE_LOG_LEN },
+	{
+		.type = OPTION_INTEGER,
+		.long_name = "log",
+		.value = &shortlog_len,
+		.precision = sizeof(shortlog_len),
+		.argh = N_("n"),
+		.help = N_("add (at most <n>) entries from shortlog to merge commit message"),
+		.flags = PARSE_OPT_OPTARG,
+		.defval = DEFAULT_MERGE_LOG_LEN,
+	},
 	OPT_BOOL(0, "squash", &squash,
 		N_("create a single commit instead of doing a merge")),
 	OPT_BOOL(0, "commit", &option_commit,
@@ -271,9 +280,16 @@ static struct option builtin_merge_options[] = {
 	OPT_CALLBACK('m', "message", &merge_msg, N_("message"),
 		N_("merge commit message (for a non-fast-forward merge)"),
 		option_parse_message),
-	{ OPTION_LOWLEVEL_CALLBACK, 'F', "file", &merge_msg, N_("path"),
-		N_("read message from file"), PARSE_OPT_NONEG,
-		NULL, 0, option_read_message },
+	{
+		.type = OPTION_LOWLEVEL_CALLBACK,
+		.short_name = 'F',
+		.long_name = "file",
+		.value = &merge_msg,
+		.argh = N_("path"),
+		.help = N_("read message from file"),
+		.flags = PARSE_OPT_NONEG,
+		.ll_callback = option_read_message,
+	},
 	OPT_STRING(0, "into-name", &into_name, N_("name"),
 		   N_("use <name> instead of the real target")),
 	OPT__VERBOSITY(&verbosity),
@@ -286,8 +302,16 @@ static struct option builtin_merge_options[] = {
 	OPT_BOOL(0, "allow-unrelated-histories", &allow_unrelated_histories,
 		 N_("allow merging unrelated histories")),
 	OPT_SET_INT(0, "progress", &show_progress, N_("force progress reporting"), 1),
-	{ OPTION_STRING, 'S', "gpg-sign", &sign_commit, N_("key-id"),
-	  N_("GPG sign commit"), PARSE_OPT_OPTARG, NULL, (intptr_t) "" },
+	{
+		.type = OPTION_STRING,
+		.short_name = 'S',
+		.long_name = "gpg-sign",
+		.value = &sign_commit,
+		.argh = N_("key-id"),
+		.help = N_("GPG sign commit"),
+		.flags = PARSE_OPT_OPTARG,
+		.defval = (intptr_t) "",
+	},
 	OPT_AUTOSTASH(&autostash),
 	OPT_BOOL(0, "overwrite-ignore", &overwrite_ignore, N_("update ignored files (default)")),
 	OPT_BOOL(0, "signoff", &signoff, N_("add a Signed-off-by trailer")),
@@ -498,7 +522,7 @@ static void merge_name(const char *remote, struct strbuf *msg)
 	char *found_ref = NULL;
 	int len, early;
 
-	strbuf_branchname(&bname, remote, 0);
+	copy_branchname(&bname, remote, 0);
 	remote = bname.buf;
 
 	oidclr(&branch_head, the_repository->hash_algo);
@@ -747,13 +771,10 @@ static int try_merge_strategy(const char *strategy, struct commit_list *common,
 
 		repo_hold_locked_index(the_repository, &lock,
 				       LOCK_DIE_ON_ERROR);
-		if (!strcmp(strategy, "ort"))
-			clean = merge_ort_recursive(&o, head, remoteheads->item,
-						    reversed, &result);
-		else
-			clean = merge_recursive(&o, head, remoteheads->item,
-						reversed, &result);
+		clean = merge_ort_recursive(&o, head, remoteheads->item,
+					    reversed, &result);
 		free_commit_list(reversed);
+		strbuf_release(&o.obuf);
 
 		if (clean < 0) {
 			rollback_lock_file(&lock);
@@ -1296,8 +1317,8 @@ int cmd_merge(int argc,
 	void *branch_to_free;
 	int orig_argc = argc;
 
-	if (argc == 2 && !strcmp(argv[1], "-h"))
-		usage_with_options(builtin_merge_usage, builtin_merge_options);
+	show_usage_with_options_if_asked(argc, argv,
+					 builtin_merge_usage, builtin_merge_options);
 
 	prepare_repo_settings(the_repository);
 	the_repository->settings.command_requires_full_index = 0;
@@ -1311,12 +1332,6 @@ int cmd_merge(int argc,
 						      NULL);
 	if (branch)
 		skip_prefix(branch, "refs/heads/", &branch);
-
-	if (!pull_twohead) {
-		char *default_strategy = getenv("GIT_TEST_MERGE_ALGORITHM");
-		if (default_strategy && !strcmp(default_strategy, "ort"))
-			pull_twohead = xstrdup("ort");
-	}
 
 	init_diff_ui_defaults();
 	git_config(git_merge_config, NULL);
@@ -1518,12 +1533,6 @@ int cmd_merge(int argc,
 			fast_forward = FF_NO;
 	}
 
-	if (!use_strategies && !pull_twohead &&
-	    remoteheads && !remoteheads->next) {
-		char *default_strategy = getenv("GIT_TEST_MERGE_ALGORITHM");
-		if (default_strategy)
-			append_strategy(get_strategy(default_strategy));
-	}
 	if (!use_strategies) {
 		if (!remoteheads)
 			; /* already up-to-date */

@@ -7,7 +7,7 @@
 #include "midx.h"
 #include "strbuf.h"
 #include "trace2.h"
-#include "object-store-ll.h"
+#include "object-store.h"
 #include "replace-object.h"
 #include "repository.h"
 
@@ -119,7 +119,8 @@ static void read_packs_from_stdin(struct string_list *to)
 }
 
 static int cmd_multi_pack_index_write(int argc, const char **argv,
-				      const char *prefix)
+				      const char *prefix,
+				      struct repository *repo)
 {
 	struct option *options;
 	static struct option builtin_multi_pack_index_write_options[] = {
@@ -164,7 +165,7 @@ static int cmd_multi_pack_index_write(int argc, const char **argv,
 
 		read_packs_from_stdin(&packs);
 
-		ret = write_midx_file_only(opts.object_dir, &packs,
+		ret = write_midx_file_only(repo, opts.object_dir, &packs,
 					   opts.preferred_pack,
 					   opts.refs_snapshot, opts.flags);
 
@@ -175,7 +176,7 @@ static int cmd_multi_pack_index_write(int argc, const char **argv,
 
 	}
 
-	ret = write_midx_file(opts.object_dir, opts.preferred_pack,
+	ret = write_midx_file(repo, opts.object_dir, opts.preferred_pack,
 			      opts.refs_snapshot, opts.flags);
 
 	free(opts.refs_snapshot);
@@ -183,7 +184,8 @@ static int cmd_multi_pack_index_write(int argc, const char **argv,
 }
 
 static int cmd_multi_pack_index_verify(int argc, const char **argv,
-				       const char *prefix)
+				       const char *prefix,
+				       struct repository *repo UNUSED)
 {
 	struct option *options;
 	static struct option builtin_multi_pack_index_verify_options[] = {
@@ -210,7 +212,8 @@ static int cmd_multi_pack_index_verify(int argc, const char **argv,
 }
 
 static int cmd_multi_pack_index_expire(int argc, const char **argv,
-				       const char *prefix)
+				       const char *prefix,
+				       struct repository *repo UNUSED)
 {
 	struct option *options;
 	static struct option builtin_multi_pack_index_expire_options[] = {
@@ -237,11 +240,12 @@ static int cmd_multi_pack_index_expire(int argc, const char **argv,
 }
 
 static int cmd_multi_pack_index_repack(int argc, const char **argv,
-				       const char *prefix)
+				       const char *prefix,
+				       struct repository *repo UNUSED)
 {
 	struct option *options;
 	static struct option builtin_multi_pack_index_repack_options[] = {
-		OPT_MAGNITUDE(0, "batch-size", &opts.batch_size,
+		OPT_UNSIGNED(0, "batch-size", &opts.batch_size,
 		  N_("during repack, collect pack-files of smaller size into a batch that is larger than this size")),
 		OPT_BIT(0, "progress", &opts.flags,
 		  N_("force progress reporting"), MIDX_PROGRESS),
@@ -271,7 +275,7 @@ static int cmd_multi_pack_index_repack(int argc, const char **argv,
 int cmd_multi_pack_index(int argc,
 			 const char **argv,
 			 const char *prefix,
-			 struct repository *repo UNUSED)
+			 struct repository *repo)
 {
 	int res;
 	parse_opt_subcommand_fn *fn = NULL;
@@ -297,7 +301,7 @@ int cmd_multi_pack_index(int argc,
 			     builtin_multi_pack_index_usage, 0);
 	FREE_AND_NULL(options);
 
-	res = fn(argc, argv, prefix);
+	res = fn(argc, argv, prefix, repo);
 
 	free(opts.object_dir);
 	return res;

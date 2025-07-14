@@ -8,12 +8,13 @@
  */
 
 #define USE_THE_REPOSITORY_VARIABLE
+#define DISABLE_SIGN_COMPARE_WARNINGS
 
 #include "git-compat-util.h"
 #include "abspath.h"
 #include "base85.h"
 #include "config.h"
-#include "object-store-ll.h"
+#include "object-store.h"
 #include "delta.h"
 #include "diff.h"
 #include "dir.h"
@@ -81,7 +82,7 @@ static int parse_whitespace_option(struct apply_state *state, const char *option
 	}
 	/*
 	 * Please update $__git_whitespacelist in git-completion.bash,
-	 * Documentation/git-apply.txt, and Documentation/git-am.txt
+	 * Documentation/git-apply.adoc, and Documentation/git-am.adoc
 	 * when you add new options.
 	 */
 	return error(_("unrecognized whitespace option '%s'"), option);
@@ -1422,7 +1423,10 @@ static int parse_num(const char *line, unsigned long *p)
 
 	if (!isdigit(*line))
 		return 0;
+	errno = 0;
 	*p = strtoul(line, &ptr, 10);
+	if (errno)
+		return 0;
 	return ptr - line;
 }
 
@@ -2215,7 +2219,7 @@ static void reverse_patches(struct patch *p)
 		struct fragment *frag = p->fragments;
 
 		SWAP(p->new_name, p->old_name);
-		if (p->new_mode)
+		if (p->new_mode || p->is_delete)
 			SWAP(p->new_mode, p->old_mode);
 		SWAP(p->is_new, p->is_delete);
 		SWAP(p->lines_added, p->lines_deleted);
@@ -5119,8 +5123,8 @@ int apply_parse_options(int argc, const char **argv,
 		/* Think twice before adding "--nul" synonym to this */
 		OPT_SET_INT('z', NULL, &state->line_termination,
 			N_("paths are separated with NUL character"), '\0'),
-		OPT_INTEGER('C', NULL, &state->p_context,
-				N_("ensure at least <n> lines of context match")),
+		OPT_UNSIGNED('C', NULL, &state->p_context,
+			     N_("ensure at least <n> lines of context match")),
 		OPT_CALLBACK(0, "whitespace", state, N_("action"),
 			N_("detect new or modified lines that have whitespace errors"),
 			apply_option_parse_whitespace),

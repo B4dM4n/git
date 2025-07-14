@@ -3,7 +3,10 @@
  *
  * Copyright (c) 2006 Junio C Hamano
  */
+
 #define USE_THE_REPOSITORY_VARIABLE
+#define DISABLE_SIGN_COMPARE_WARNINGS
+
 #include "builtin.h"
 #include "config.h"
 #include "ewah/ewok.h"
@@ -101,7 +104,7 @@ static void builtin_diff_b_f(struct rev_info *revs,
 
 	stuff_change(&revs->diffopt,
 		     blob[0]->mode, canon_mode(st.st_mode),
-		     &blob[0]->item->oid, null_oid(),
+		     &blob[0]->item->oid, null_oid(the_hash_algo),
 		     1, 0,
 		     blob[0]->path ? blob[0]->path : path,
 		     path);
@@ -495,7 +498,8 @@ int cmd_diff(int argc,
 
 	/* If this is a no-index diff, just run it and exit there. */
 	if (no_index)
-		exit(diff_no_index(&rev, no_index == DIFF_NO_INDEX_IMPLICIT,
+		exit(diff_no_index(&rev, the_repository->hash_algo,
+				   no_index == DIFF_NO_INDEX_IMPLICIT,
 				   argc, argv));
 
 
@@ -628,6 +632,5 @@ int cmd_diff(int argc,
 	release_revisions(&rev);
 	object_array_clear(&ent);
 	symdiff_release(&sdiff);
-	UNLEAK(blob);
 	return result;
 }

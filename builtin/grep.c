@@ -3,7 +3,10 @@
  *
  * Copyright (c) 2006 Junio C Hamano
  */
+
 #define USE_THE_REPOSITORY_VARIABLE
+#define DISABLE_SIGN_COMPARE_WARNINGS
+
 #include "builtin.h"
 #include "abspath.h"
 #include "gettext.h"
@@ -23,7 +26,7 @@
 #include "submodule-config.h"
 #include "object-file.h"
 #include "object-name.h"
-#include "object-store-ll.h"
+#include "object-store.h"
 #include "packfile.h"
 #include "pager.h"
 #include "path.h"
@@ -450,7 +453,7 @@ static int grep_submodule(struct grep_opt *opt,
 		return 0;
 
 	subrepo = xmalloc(sizeof(*subrepo));
-	if (repo_submodule_init(subrepo, superproject, path, null_oid())) {
+	if (repo_submodule_init(subrepo, superproject, path, null_oid(opt->repo->hash_algo))) {
 		free(subrepo);
 		return 0;
 	}
@@ -906,6 +909,7 @@ int cmd_grep(int argc,
 	int dummy;
 	int use_index = 1;
 	int allow_revs;
+	int ret;
 
 	struct option options[] = {
 		OPT_BOOL(0, "cached", &cached,
@@ -979,9 +983,9 @@ int cmd_grep(int argc,
 		OPT_CALLBACK('C', "context", &opt, N_("n"),
 			N_("show <n> context lines before and after matches"),
 			context_callback),
-		OPT_INTEGER('B', "before-context", &opt.pre_context,
+		OPT_UNSIGNED('B', "before-context", &opt.pre_context,
 			N_("show <n> context lines before matches")),
-		OPT_INTEGER('A', "after-context", &opt.post_context,
+		OPT_UNSIGNED('A', "after-context", &opt.post_context,
 			N_("show <n> context lines after matches")),
 		OPT_INTEGER(0, "threads", &num_threads,
 			N_("use <n> worker threads")),
@@ -1013,10 +1017,16 @@ int cmd_grep(int argc,
 		OPT_BOOL(0, "all-match", &opt.all_match,
 			N_("show only matches from files that match all patterns")),
 		OPT_GROUP(""),
-		{ OPTION_STRING, 'O', "open-files-in-pager", &show_in_pager,
-			N_("pager"), N_("show matching files in the pager"),
-			PARSE_OPT_OPTARG | PARSE_OPT_NOCOMPLETE,
-			NULL, (intptr_t)default_pager },
+		{
+			.type = OPTION_STRING,
+			.short_name = 'O',
+			.long_name = "open-files-in-pager",
+			.value = &show_in_pager,
+			.argh = N_("pager"),
+			.help = N_("show matching files in the pager"),
+			.flags = PARSE_OPT_OPTARG | PARSE_OPT_NOCOMPLETE,
+			.defval = (intptr_t)default_pager,
+		},
 		OPT_BOOL_F(0, "ext-grep", &external_grep_allowed__ignored,
 			   N_("allow calling of grep(1) (ignored by this build)"),
 			   PARSE_OPT_NOCOMPLETE),
@@ -1080,7 +1090,7 @@ int cmd_grep(int argc,
 	}
 
 	if (show_in_pager == default_pager)
-		show_in_pager = git_pager(1);
+		show_in_pager = git_pager(the_repository, 1);
 	if (show_in_pager) {
 		opt.color = 0;
 		opt.name_only = 1;
@@ -1140,7 +1150,7 @@ int cmd_grep(int argc,
 			break;
 		}
 
-		object = parse_object_or_die(&oid, arg);
+		object = parse_object_or_die(the_repository, &oid, arg);
 		if (!seen_dashdash)
 			verify_non_filename(prefix, arg);
 		add_object_array_with_path(object, arg, &list, oc.mode, oc.path);
@@ -1172,8 +1182,10 @@ int cmd_grep(int argc,
 	 * Optimize out the case where the amount of matches is limited to zero.
 	 * We do this to keep results consistent with GNU grep(1).
 	 */
-	if (opt.max_count == 0)
-		return 1;
+	if (opt.max_count == 0) {
+		ret = 1;
+		goto out;
+	}
 
 	if (show_in_pager) {
 		if (num_threads > 1)
@@ -1240,7 +1252,7 @@ int cmd_grep(int argc,
 	}
 
 	if (!show_in_pager && !opt.status_only)
-		setup_pager();
+		setup_pager(the_repository);
 
 	die_for_incompatible_opt3(!use_index, "--no-index",
 				  untracked, "--untracked",
@@ -1267,10 +1279,14 @@ int cmd_grep(int argc,
 		hit |= wait_all();
 	if (hit && show_in_pager)
 		run_pager(&opt, prefix);
+
+	ret = !hit;
+
+out:
 	clear_pathspec(&pathspec);
 	string_list_clear(&path_list, 0);
 	free_grep_patterns(&opt);
 	object_array_clear(&list);
 	free_repos();
-	return !hit;
+	return ret;
 }

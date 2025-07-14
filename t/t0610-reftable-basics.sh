@@ -10,10 +10,16 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 GIT_TEST_DEFAULT_REF_FORMAT=reftable
 export GIT_TEST_DEFAULT_REF_FORMAT
 
-TEST_PASSES_SANITIZE_LEAK=true
 . ./test-lib.sh
 
 INVALID_OID=$(test_oid 001)
+
+test_expect_success 'pack-refs does not crash with -h' '
+	test_expect_code 129 git pack-refs -h >usage &&
+	test_grep "[Uu]sage: git pack-refs " usage &&
+	test_expect_code 129 nongit git pack-refs -h >usage &&
+	test_grep "[Uu]sage: git pack-refs " usage
+'
 
 test_expect_success 'init: creates basic reftable structures' '
 	test_when_finished "rm -rf repo" &&
@@ -450,10 +456,12 @@ test_expect_success 'ref transaction: retry acquiring tables.list lock' '
 	)
 '
 
-# This test fails most of the time on Windows systems. The root cause is
+# This test fails most of the time on Cygwin systems. The root cause is
 # that Windows does not allow us to rename the "tables.list.lock" file into
-# place when "tables.list" is open for reading by a concurrent process.
-test_expect_success !WINDOWS 'ref transaction: many concurrent writers' '
+# place when "tables.list" is open for reading by a concurrent process. We have
+# worked around that in our MinGW-based rename emulation, but the Cygwin
+# emulation seems to be insufficient.
+test_expect_success !CYGWIN 'ref transaction: many concurrent writers' '
 	test_when_finished "rm -rf repo" &&
 	git init repo &&
 	(
@@ -645,9 +653,8 @@ test_expect_success 'basic: commit and list refs' '
 test_expect_success 'basic: can write large commit message' '
 	test_when_finished "rm -rf repo" &&
 	git init repo &&
-	perl -e "
-		print \"this is a long commit message\" x 50000
-	" >commit-msg &&
+
+	awk "BEGIN { for (i = 0; i < 50000; i++) printf \"%s\", \"this is a long commit message\" }" >commit-msg &&
 	git -C repo commit --allow-empty --file=../commit-msg
 '
 

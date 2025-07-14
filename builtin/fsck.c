@@ -17,7 +17,7 @@
 #include "packfile.h"
 #include "object-file.h"
 #include "object-name.h"
-#include "object-store-ll.h"
+#include "object-store.h"
 #include "path.h"
 #include "read-cache-ll.h"
 #include "replace-object.h"
@@ -50,6 +50,7 @@ static int verbose;
 static int show_progress = -1;
 static int show_dangling = 1;
 static int name_objects;
+static int check_references = 1;
 #define ERROR_OBJECT 01
 #define ERROR_REACHABLE 02
 #define ERROR_PACK 04
@@ -150,7 +151,7 @@ static int mark_object(struct object *obj, enum object_type type,
 		return 0;
 	obj->flags |= REACHABLE;
 
-	if (is_promisor_object(&obj->oid))
+	if (is_promisor_object(the_repository, &obj->oid))
 		/*
 		 * Further recursion does not need to be performed on this
 		 * object since it is a promisor object (so it does not need to
@@ -197,7 +198,8 @@ static int traverse_reachable(void)
 	unsigned int nr = 0;
 	int result = 0;
 	if (show_progress)
-		progress = start_delayed_progress(_("Checking connectivity"), 0);
+		progress = start_delayed_progress(the_repository,
+						  _("Checking connectivity"), 0);
 	while (pending.nr) {
 		result |= traverse_one_object(object_array_pop(&pending));
 		display_progress(progress, ++nr);
@@ -270,9 +272,9 @@ static void check_reachable_object(struct object *obj)
 	 * do a full fsck
 	 */
 	if (!(obj->flags & HAS_OBJ)) {
-		if (is_promisor_object(&obj->oid))
+		if (is_promisor_object(the_repository, &obj->oid))
 			return;
-		if (has_object_pack(&obj->oid))
+		if (has_object_pack(the_repository, &obj->oid))
 			return; /* it is in pack - forget about it */
 		printf_ln(_("missing %s %s"),
 			  printable_type(&obj->oid, obj->type),
@@ -325,12 +327,12 @@ static void check_unreachable_object(struct object *obj)
 				  printable_type(&obj->oid, obj->type),
 				  describe_object(&obj->oid));
 		if (write_lost_and_found) {
-			char *filename = git_pathdup("lost-found/%s/%s",
+			char *filename = repo_git_path(the_repository, "lost-found/%s/%s",
 				obj->type == OBJ_COMMIT ? "commit" : "other",
 				describe_object(&obj->oid));
 			FILE *f;
 
-			if (safe_create_leading_directories_const(filename)) {
+			if (safe_create_leading_directories_const(the_repository, filename)) {
 				error(_("could not create lost-found"));
 				free(filename);
 				return;
@@ -391,16 +393,19 @@ static void check_connectivity(void)
 		 * traversal.
 		 */
 		for_each_loose_object(mark_loose_unreachable_referents, NULL, 0);
-		for_each_packed_object(mark_packed_unreachable_referents, NULL, 0);
+		for_each_packed_object(the_repository,
+				       mark_packed_unreachable_referents,
+				       NULL,
+				       0);
 	}
 
 	/* Look up all the requirements, warn about missing objects.. */
-	max = get_max_object_index();
+	max = get_max_object_index(the_repository);
 	if (verbose)
 		fprintf_ln(stderr, _("Checking connectivity (%d objects)"), max);
 
 	for (i = 0; i < max; i++) {
-		struct object *obj = get_indexed_object(i);
+		struct object *obj = get_indexed_object(the_repository, i);
 
 		if (obj)
 			check_object(obj);
@@ -488,7 +493,7 @@ static void fsck_handle_reflog_oid(const char *refname, struct object_id *oid,
 						     refname, timestamp);
 			obj->flags |= USED;
 			mark_object_reachable(obj);
-		} else if (!is_promisor_object(oid)) {
+		} else if (!is_promisor_object(the_repository, oid)) {
 			error(_("%s: invalid reflog entry %s"),
 			      refname, oid_to_hex(oid));
 			errors_found |= ERROR_REACHABLE;
@@ -531,7 +536,7 @@ static int fsck_handle_ref(const char *refname, const char *referent UNUSED, con
 
 	obj = parse_object(the_repository, oid);
 	if (!obj) {
-		if (is_promisor_object(oid)) {
+		if (is_promisor_object(the_repository, oid)) {
 			/*
 			 * Increment default_refs anyway, because this is a
 			 * valid ref.
@@ -609,23 +614,20 @@ static void get_default_heads(void)
 struct for_each_loose_cb
 {
 	struct progress *progress;
-	struct strbuf obj_type;
 };
 
-static int fsck_loose(const struct object_id *oid, const char *path, void *data)
+static int fsck_loose(const struct object_id *oid, const char *path,
+		      void *data UNUSED)
 {
-	struct for_each_loose_cb *cb_data = data;
 	struct object *obj;
 	enum object_type type = OBJ_NONE;
 	unsigned long size;
 	void *contents = NULL;
 	int eaten;
 	struct object_info oi = OBJECT_INFO_INIT;
-	struct object_id real_oid = *null_oid();
+	struct object_id real_oid = *null_oid(the_hash_algo);
 	int err = 0;
 
-	strbuf_reset(&cb_data->obj_type);
-	oi.type_name = &cb_data->obj_type;
 	oi.sizep = &size;
 	oi.typep = &type;
 
@@ -637,10 +639,6 @@ static int fsck_loose(const struct object_id *oid, const char *path, void *data)
 			err = error(_("%s: object corrupt or missing: %s"),
 				    oid_to_hex(oid), path);
 	}
-	if (type != OBJ_NONE && type < 0)
-		err = error(_("%s: object is of unknown type '%s': %s"),
-			    oid_to_hex(&real_oid), cb_data->obj_type.buf,
-			    path);
 	if (err < 0) {
 		errors_found |= ERROR_OBJECT;
 		free(contents);
@@ -692,7 +690,6 @@ static void fsck_object_dir(const char *path)
 {
 	struct progress *progress = NULL;
 	struct for_each_loose_cb cb_data = {
-		.obj_type = STRBUF_INIT,
 		.progress = progress,
 	};
 
@@ -700,13 +697,13 @@ static void fsck_object_dir(const char *path)
 		fprintf_ln(stderr, _("Checking object directory"));
 
 	if (show_progress)
-		progress = start_progress(_("Checking object directories"), 256);
+		progress = start_progress(the_repository,
+					  _("Checking object directories"), 256);
 
 	for_each_loose_file_in_objdir(path, fsck_loose, fsck_cruft, fsck_subdir,
 				      &cb_data);
 	display_progress(progress, 256);
 	stop_progress(&progress);
-	strbuf_release(&cb_data.obj_type);
 }
 
 static int fsck_head_link(const char *head_ref_name,
@@ -876,7 +873,8 @@ static int check_pack_rev_indexes(struct repository *r, int show_progress)
 	if (show_progress) {
 		for (struct packed_git *p = get_all_packs(r); p; p = p->next)
 			pack_count++;
-		progress = start_delayed_progress("Verifying reverse pack-indexes", pack_count);
+		progress = start_delayed_progress(the_repository,
+						  "Verifying reverse pack-indexes", pack_count);
 		pack_count = 0;
 	}
 
@@ -899,11 +897,37 @@ static int check_pack_rev_indexes(struct repository *r, int show_progress)
 	return res;
 }
 
+static void fsck_refs(struct repository *r)
+{
+	struct child_process refs_verify = CHILD_PROCESS_INIT;
+	struct progress *progress = NULL;
+
+	if (show_progress)
+		progress = start_progress(r, _("Checking ref database"), 1);
+
+	if (verbose)
+		fprintf_ln(stderr, _("Checking ref database"));
+
+	child_process_init(&refs_verify);
+	refs_verify.git_cmd = 1;
+	strvec_pushl(&refs_verify.args, "refs", "verify", NULL);
+	if (verbose)
+		strvec_push(&refs_verify.args, "--verbose");
+	if (check_strict)
+		strvec_push(&refs_verify.args, "--strict");
+
+	if (run_command(&refs_verify))
+		errors_found |= ERROR_REFS;
+
+	display_progress(progress, 1);
+	stop_progress(&progress);
+}
+
 static char const * const fsck_usage[] = {
 	N_("git fsck [--tags] [--root] [--unreachable] [--cache] [--no-reflogs]\n"
 	   "         [--[no-]full] [--strict] [--verbose] [--lost-found]\n"
 	   "         [--[no-]dangling] [--[no-]progress] [--connectivity-only]\n"
-	   "         [--[no-]name-objects] [<object>...]"),
+	   "         [--[no-]name-objects] [--[no-]references] [<object>...]"),
 	NULL
 };
 
@@ -922,6 +946,7 @@ static struct option fsck_opts[] = {
 				N_("write dangling objects in .git/lost-found")),
 	OPT_BOOL(0, "progress", &show_progress, N_("show progress")),
 	OPT_BOOL(0, "name-objects", &name_objects, N_("show verbose names for reachable objects")),
+	OPT_BOOL(0, "references", &check_references, N_("check reference database consistency")),
 	OPT_END(),
 };
 
@@ -964,9 +989,13 @@ int cmd_fsck(int argc,
 	git_config(git_fsck_config, &fsck_obj_options);
 	prepare_repo_settings(the_repository);
 
+	if (check_references)
+		fsck_refs(the_repository);
+
 	if (connectivity_only) {
 		for_each_loose_object(mark_loose_for_connectivity, NULL, 0);
-		for_each_packed_object(mark_packed_for_connectivity, NULL, 0);
+		for_each_packed_object(the_repository,
+				       mark_packed_for_connectivity, NULL, 0);
 	} else {
 		prepare_alt_odb(the_repository);
 		for (odb = the_repository->objects->odb; odb; odb = odb->next)
@@ -985,7 +1014,8 @@ int cmd_fsck(int argc,
 					total += p->num_objects;
 				}
 
-				progress = start_progress(_("Checking objects"), total);
+				progress = start_progress(the_repository,
+							  _("Checking objects"), total);
 			}
 			for (p = get_all_packs(the_repository); p;
 			     p = p->next) {
@@ -1011,7 +1041,7 @@ int cmd_fsck(int argc,
 							   &oid);
 
 			if (!obj || !(obj->flags & HAS_OBJ)) {
-				if (is_promisor_object(&oid))
+				if (is_promisor_object(the_repository, &oid))
 					continue;
 				error(_("%s: object missing"), oid_to_hex(&oid));
 				errors_found |= ERROR_OBJECT;
@@ -1049,7 +1079,7 @@ int cmd_fsck(int argc,
 			struct worktree *wt = *p;
 			struct index_state istate =
 				INDEX_STATE_INIT(the_repository);
-			char *path;
+			char *path, *wt_gitdir;
 
 			/*
 			 * Make a copy since the buffer is reusable
@@ -1057,9 +1087,13 @@ int cmd_fsck(int argc,
 			 * while we're examining the index.
 			 */
 			path = xstrdup(worktree_git_path(the_repository, wt, "index"));
-			read_index_from(&istate, path, get_worktree_git_dir(wt));
+			wt_gitdir = get_worktree_git_dir(wt);
+
+			read_index_from(&istate, path, wt_gitdir);
 			fsck_index(&istate, path, wt->is_current);
+
 			discard_index(&istate);
+			free(wt_gitdir);
 			free(path);
 		}
 		free_worktrees(worktrees);

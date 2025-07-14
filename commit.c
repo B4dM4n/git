@@ -9,7 +9,7 @@
 #include "hex.h"
 #include "repository.h"
 #include "object-name.h"
-#include "object-store-ll.h"
+#include "object-store.h"
 #include "utf8.h"
 #include "diff.h"
 #include "revision.h"
@@ -29,6 +29,7 @@
 #include "tree.h"
 #include "hook.h"
 #include "parse.h"
+#include "object-file.h"
 #include "object-file-convert.h"
 
 static struct commit_extra_header *read_commit_extra_header_lines(const char *buf, size_t len, const char **);
@@ -276,7 +277,7 @@ static int read_graft_file(struct repository *r, const char *graft_file)
 			 "to convert the grafts into replace refs.\n"
 			 "\n"
 			 "Turn this message off by running\n"
-			 "\"git config advice.graftFileDeprecated false\""));
+			 "\"git config set advice.graftFileDeprecated false\""));
 	while (!strbuf_getwholeline(&buf, fp, '\n')) {
 		/* The format is just "Commit Parent1 Parent2 ...\n" */
 		struct commit_graft *graft = read_graft_line(&buf);
@@ -778,21 +779,19 @@ static void clear_commit_marks_1(struct commit_list **plist,
 	}
 }
 
-void clear_commit_marks_many(int nr, struct commit **commit, unsigned int mark)
+void clear_commit_marks_many(size_t nr, struct commit **commit, unsigned int mark)
 {
-	struct commit_list *list = NULL;
-
-	while (nr--) {
-		clear_commit_marks_1(&list, *commit, mark);
-		commit++;
-	}
-	while (list)
-		clear_commit_marks_1(&list, pop_commit(&list), mark);
+	for (size_t i = 0; i < nr; i++)
+		clear_commit_marks(commit[i], mark);
 }
 
 void clear_commit_marks(struct commit *commit, unsigned int mark)
 {
-	clear_commit_marks_many(1, &commit, mark);
+	struct commit_list *list = NULL;
+
+	clear_commit_marks_1(&list, commit, mark);
+	while (list)
+		clear_commit_marks_1(&list, pop_commit(&list), mark);
 }
 
 struct commit *pop_commit(struct commit_list **stack)
@@ -1380,7 +1379,7 @@ static int convert_commit_extra_headers(const struct commit_extra_header *orig,
 		struct commit_extra_header *new;
 		CALLOC_ARRAY(new, 1);
 		if (!strcmp(orig->key, "mergetag")) {
-			if (convert_object_file(&out, algo, compat,
+			if (convert_object_file(the_repository, &out, algo, compat,
 						orig->value, orig->len,
 						OBJ_TAG, 1)) {
 				free(new);
@@ -1765,7 +1764,6 @@ int commit_tree_extended(const char *msg, size_t msg_len,
 			{ &compat_sig, r->compat_hash_algo },
 			{ &sig, r->hash_algo },
 		};
-		int i;
 
 		/*
 		 * We write algorithms in the order they were implemented in
@@ -1779,7 +1777,7 @@ int commit_tree_extended(const char *msg, size_t msg_len,
 		 * We traverse each algorithm in order, and apply the signature
 		 * to each buffer.
 		 */
-		for (i = 0; i < ARRAY_SIZE(bufs); i++) {
+		for (size_t i = 0; i < ARRAY_SIZE(bufs); i++) {
 			if (!bufs[i].algo)
 				continue;
 			add_header_signature(&buffer, bufs[i].sig, bufs[i].algo);
